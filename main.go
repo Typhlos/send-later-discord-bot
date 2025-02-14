@@ -66,6 +66,18 @@ var (
 				},
 			},
 		},
+		&discordgo.ApplicationCommand{
+			Name:        "setup",
+			Description: "Where to set up the interaction",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionChannel,
+					Name:        "channel",
+					Description: "Channel to send the message",
+					Required:    true,
+				},
+			},
+		},
 	}
 	commandHandlers = map[string]func(s *discordgo.Session, i *discordgo.InteractionCreate){
 		"sendlater": func(s *discordgo.Session, i *discordgo.InteractionCreate) {
