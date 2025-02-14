@@ -28,9 +28,47 @@ import (
 )
 
 var (
-	Token  = os.Getenv("DISCORD_TOKEN")
-	logger = slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	loc    *time.Location
+	Token    = os.Getenv("DISCORD_TOKEN")
+	logger   = slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	loc      *time.Location
+	commands = []*discordgo.ApplicationCommand{
+		&discordgo.ApplicationCommand{
+			Name:        "sendlater",
+			Description: "Schedules a message (one line) or an attachment (several lines) to be sent at a later time",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "time",
+					Description: "The time to send the message (HH:MM)",
+					Required:    true,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "message",
+					Description: "The message to send (one line)",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionAttachment,
+					Name:        "attachment",
+					Description: "The message to send (several lines)",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "date",
+					Description: "[Optionnal] The date to send the message (dd/mm/yyyy). Default: today",
+					Required:    false,
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionChannel,
+					Name:        "channel",
+					Description: "[Optionnal] Channel to send the message. Default: current channel",
+					Required:    false,
+				},
+			},
+		},
+	}
 )
 
 func main() {
@@ -161,7 +199,13 @@ func main() {
 				}
 
 				// we schedule the message
-				err := scheduleMessage(s, message, attachment, sendTime, date, channel)
+				toSend := ""
+				if message != "" {
+					toSend = message
+				} else {
+					toSend = attachment
+				}
+				err := scheduleMessage(s, toSend, sendTime, date, channel)
 				if err != nil {
 					logger.Error("Error scheduling message: ", "error", err)
 					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -192,10 +236,12 @@ func main() {
 	}
 
 	// Register the command
-	cmd, err := registerCommand(dg, "sendlater")
-	if err != nil {
-		logger.Error("Error registering command,", "error", err, "command", cmd.Name)
-		os.Exit(1)
+	for _, cmd := range commands {
+		err := registerCommand(dg, cmd)
+		if err != nil {
+			logger.Error("Error registering command,", "error", err, "command", cmd.Name)
+			os.Exit(1)
+		}
 	}
 
 	// watch for interruption and gracefully shut down
@@ -205,76 +251,38 @@ func main() {
 	<-stop
 	logger.Info("Removing commands...")
 
-	err = dg.ApplicationCommandDelete(dg.State.User.ID, "", cmd.ID)
-	if err != nil {
-		logger.Error("Cannot delete command", "error", err, "command", cmd.Name)
+	for _, cmd := range commands {
+		err = dg.ApplicationCommandDelete(dg.State.User.ID, "", cmd.ID)
+		if err != nil {
+			logger.Error("Cannot delete command", "error", err, "command", cmd.Name)
+		}
 	}
 
 	logger.Info("Gracefully shutting down.")
 }
 
-func registerCommand(s *discordgo.Session, commandName string) (*discordgo.ApplicationCommand, error) {
-	// Create a new command
-	command := &discordgo.ApplicationCommand{
-		Name:        commandName,
-		Description: "Schedules a message (one line) or an attachment (several lines) to be sent at a later time. If time is set in the past, the message will be sent after one minute",
-		Options: []*discordgo.ApplicationCommandOption{
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "time",
-				Description: "The time to send the message (HH:MM)",
-				Required:    true,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "message",
-				Description: "The message to send (one line)",
-				Required:    false,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionAttachment,
-				Name:        "attachment",
-				Description: "The message to send (several lines)",
-				Required:    false,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionString,
-				Name:        "date",
-				Description: "[Optionnal] The date to send the message (dd/mm/yyyy). Default: today",
-				Required:    false,
-			},
-			{
-				Type:        discordgo.ApplicationCommandOptionChannel,
-				Name:        "channel",
-				Description: "[Optionnal] Channel to send the message. Default: current channel",
-				Required:    false,
-			},
-		},
-	}
-
-	// Register the command
-	cmd, err := s.ApplicationCommandCreate(s.State.User.ID, "", command)
+func registerCommand(s *discordgo.Session, command *discordgo.ApplicationCommand) error {
+	_, err := s.ApplicationCommandCreate(s.State.User.ID, "", command)
 	if err != nil {
-		logger.Error("Error creating command,", "error", err)
-
+		logger.Error("Error creating command,", "error", err, "command", command.Name)
+		return err
 	} else {
-		logger.Info("Command registered successfully!")
+		logger.Info("Command registered successfully!", "command", command.Name)
 	}
-	return cmd, nil
+	return nil
 }
 
-func scheduleMessage(s *discordgo.Session, message string, attachment string, sendTime string, date string, channel *discordgo.Channel) error {
+func scheduleMessage(s *discordgo.Session, message string, sendTime string, date string, channel *discordgo.Channel) error {
 	// Define the fixed time when the message should be sent.
-	toSend := ""
 	fixedTime, err := time.ParseInLocation("02/01/2006 15:04", date+" "+sendTime, loc)
 	if err != nil {
 		return errors.New("Error parsing fixed time: " + err.Error())
 	}
 	logger.Info("Time parsed", "time", fixedTime)
-	if message != "" {
-		toSend = message
-	} else {
-		toSend = attachment
+
+	messageSend := &discordgo.MessageSend{
+		Content: message,
+		Files:   nil,
 	}
 	go func() {
 		// Use a ticker to periodically check the current time.
@@ -287,8 +295,9 @@ func scheduleMessage(s *discordgo.Session, message string, attachment string, se
 				now := time.Now()
 				if fixedTime.Before(now) {
 					// Send a message to the specified channel.
-					logger.Info("Sending message", "message", toSend, "channel", channel.Name)
-					_, err := s.ChannelMessageSend(channel.ID, toSend)
+					logger.Info("Sending message", "message", messageSend, "channel", channel.Name)
+					//_, err := s.ChannelMessageSend(channel.ID, toSend)
+					_, err := s.ChannelMessageSendComplex(channel.ID, messageSend)
 					if err != nil {
 						logger.Error("Error sending message,", "error", err)
 					}

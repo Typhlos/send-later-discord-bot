@@ -11,7 +11,7 @@ To install the bot, you will need to have go 1.23.6 installed on your computer. 
 1. Clone the repository to your computer.
 2. Run `go build -o sendlater` in the root directory of the project.
 3. Set the `DISCORD_TOKEN` environment variable to your bot's token.
-4. Invite the bot to your server using the following URL: `https://discord.com/oauth2/authorize?client_id=YOUR_BOT_ID&scope=bot&permissions=2147483648`
+4. Invite the bot to your server using the following URL: `https://discord.com/oauth2/authorize?client_id=YOUR_BOT_ID&scope=bot&permissions=182272`
 5. Run `./sendlater` in the root directory of the project to start the bot.
 
 ## Usage
@@ -34,6 +34,10 @@ For example, to send the message "Hello, world!" to the channel `#general` at 12
 ```
 /sendlater #general 12:00 "Hello, world!"
 ```
+
+## Permissions
+
+The bot ask the permission to send messages, mention everyone, attach files and add embed links.
 
 ## License
 
