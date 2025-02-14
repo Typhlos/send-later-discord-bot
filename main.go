@@ -18,12 +18,10 @@ package main
 import (
 	"errors"
 	"github.com/bwmarrin/discordgo"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"time"
 )
 
@@ -45,13 +43,13 @@ var (
 				{
 					Type:        discordgo.ApplicationCommandOptionString,
 					Name:        "message",
-					Description: "The message to send (one line)",
-					Required:    false,
+					Description: "The message to send",
+					Required:    true,
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionAttachment,
 					Name:        "attachment",
-					Description: "The message to send (several lines)",
+					Description: "[Optional] The attachment to send",
 					Required:    false,
 				},
 				{
@@ -98,7 +96,7 @@ func main() {
 				options := i.ApplicationCommandData().Options
 				message := ""
 				sendTime := ""
-				attachment := ""
+				var attachment *discordgo.File
 				date := ""
 				var channel *discordgo.Channel
 
@@ -130,28 +128,11 @@ func main() {
 							})
 							return
 						}
-						if strings.Contains(resp.Header.Get("Content-type"), "plain/text") {
-							slog.Error("Attachment is not text", "content-type", resp.Header.Get("Content-type"), "url", attachmentUrl)
-							s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-								Type: discordgo.InteractionResponseChannelMessageWithSource,
-								Data: &discordgo.InteractionResponseData{
-									Content: "Could not get attachment, attachment is not text but " + resp.Header.Get("Content-type"),
-								},
-							})
-							return
+						attachment = &discordgo.File{
+							Name:        i.ApplicationCommandData().Resolved.Attachments[attachmentID].Filename,
+							ContentType: resp.Header.Get("Content-Type"),
+							Reader:      resp.Body,
 						}
-						attachmentBytes, err := io.ReadAll(resp.Body)
-						if err != nil {
-							slog.Error("Could not get attachment", "error", err, "url", attachmentUrl)
-							s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-								Type: discordgo.InteractionResponseChannelMessageWithSource,
-								Data: &discordgo.InteractionResponseData{
-									Content: "Could not get attachment: " + err.Error(),
-								},
-							})
-							return
-						}
-						attachment = string(attachmentBytes)
 					}
 				}
 
@@ -175,37 +156,7 @@ func main() {
 					date = time.Now().Format("02/01/2006")
 				}
 
-				// we check that at least message or attachment is set but not both
-				if message == "" && attachment == "" {
-					logger.Error("Error scheduling message: ", "error", "message and attachment cannot be empty")
-					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Error scheduling message: message and attachment cannot be empty",
-						},
-					})
-					return
-				}
-
-				if message != "" && attachment != "" {
-					logger.Error("Error scheduling message: ", "error", "message and attachment cannot be both set")
-					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-						Type: discordgo.InteractionResponseChannelMessageWithSource,
-						Data: &discordgo.InteractionResponseData{
-							Content: "Error scheduling message: message and attachment cannot be both set",
-						},
-					})
-					return
-				}
-
-				// we schedule the message
-				toSend := ""
-				if message != "" {
-					toSend = message
-				} else {
-					toSend = attachment
-				}
-				err := scheduleMessage(s, toSend, sendTime, date, channel)
+				err := scheduleMessage(s, message, attachment, sendTime, date, channel)
 				if err != nil {
 					logger.Error("Error scheduling message: ", "error", err)
 					s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -216,7 +167,7 @@ func main() {
 					})
 					return
 				}
-				logger.Info("Message scheduled\n", "message", message+attachment, "date", date, "sendTime", sendTime, "channel", channel.Name)
+				logger.Info("Message scheduled\n", "message", message, "attachement", attachment, "date", date, "sendTime", sendTime, "channel", channel.Name)
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
 					Data: &discordgo.InteractionResponseData{
@@ -251,12 +202,12 @@ func main() {
 	<-stop
 	logger.Info("Removing commands...")
 
-	for _, cmd := range commands {
-		err = dg.ApplicationCommandDelete(dg.State.User.ID, "", cmd.ID)
-		if err != nil {
-			logger.Error("Cannot delete command", "error", err, "command", cmd.Name)
-		}
-	}
+	//for _, cmd := range commands {
+	//	err = dg.ApplicationCommandDelete(dg.State.User.ID, "", cmd.ID)
+	//	if err != nil {
+	//		logger.Error("Cannot delete command", "error", err, "command", cmd.Name)
+	//	}
+	//}
 
 	logger.Info("Gracefully shutting down.")
 }
@@ -272,17 +223,21 @@ func registerCommand(s *discordgo.Session, command *discordgo.ApplicationCommand
 	return nil
 }
 
-func scheduleMessage(s *discordgo.Session, message string, sendTime string, date string, channel *discordgo.Channel) error {
+func scheduleMessage(s *discordgo.Session, message string, attachment *discordgo.File, sendTime string, date string, channel *discordgo.Channel) error {
 	// Define the fixed time when the message should be sent.
 	fixedTime, err := time.ParseInLocation("02/01/2006 15:04", date+" "+sendTime, loc)
 	if err != nil {
 		return errors.New("Error parsing fixed time: " + err.Error())
 	}
 	logger.Info("Time parsed", "time", fixedTime)
+	var files []*discordgo.File = nil
+	if attachment != nil {
+		files = []*discordgo.File{attachment}
+	}
 
 	messageSend := &discordgo.MessageSend{
 		Content: message,
-		Files:   nil,
+		Files:   files,
 	}
 	go func() {
 		// Use a ticker to periodically check the current time.
